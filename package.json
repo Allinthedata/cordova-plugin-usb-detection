@@ -1,0 +1,24 @@
+{
+  "name": "cordova-plugin-usb-detection",
+  "version": "1.0.0",
+  "description": "Cordova USB Detection - Detect USB OTG devices",
+  "cordova": {
+    "id": "cordova-plugin-usb-detection",
+    "platforms": [
+      "android"
+    ]
+  },
+  "keywords": [
+    "cordova",
+    "ecosystem:cordova",
+    "cordova-android"
+  ],
+  "engines": [
+    {
+      "name": "cordova",
+      "version": ">=5.0.0"
+    }
+  ],
+  "author": "",
+  "license": "Apache 2.0"
+}

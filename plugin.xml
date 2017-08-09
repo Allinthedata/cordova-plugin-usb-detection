@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin xmlns="http://www.phonegap.com/ns/plugins/1.0" id="cordova-plugin-usb-detection" version="1.0">
+
+
+	<name>USBDetection</name>
+	<description>USBDetection is a cordova plugin to detect USB OTG devices being added/removed. Android only.</description>
+	<license>MIT</license>
+	<keywords>cordova, android</keywords>
+
+        <js-module src="www/Usb.js" name="USBDetection">
+            <clobbers target="cordova.plugins.usbDetection" />
+	</js-module>
+
+  <platform name="android">
+
+    <config-file target="res/xml/config.xml" parent="/*">
+		<feature name="UsbDetection">
+			<param name="android-package" value="org.excession.usbDetection.UsbDetection"/>
+			<param name="onload" value="true" />
+		</feature>
+    </config-file>
+
+    <source-file src="src/android/UsbDetection.java" target-dir="src/org/excession/usbDetection"/>
+    <source-file src="src/android/Helpers.java" target-dir="src/org/excession/usbDetection"/>
+
+  </platform>
+
+</plugin>
