@@ -27,7 +27,8 @@ public class UsbDetection extends CordovaPlugin {
     private static final int REQUEST_FIND_CARD = 763;
 
     private CallbackContext updateCallback;
-    private BroadcastReceiver updateReceiver;
+    private BroadcastReceiver usbReceiver;
+    private BroadcastReceiver mediaReceiver;
 
     private CallbackContext openCallback;
 
@@ -73,7 +74,6 @@ public class UsbDetection extends CordovaPlugin {
                     if (resultCode == Activity.RESULT_OK) {
                         String path = data.getDataString();
                         LOG.v(TAG, "Found card root " + path);
-                        checkDirectory(data.getData());
                         result = new PluginResult(PluginResult.Status.OK, path);
                     } else {
                         LOG.v(TAG, "Card root failed");
@@ -84,25 +84,6 @@ public class UsbDetection extends CordovaPlugin {
                     openCallback = null;
                 }
         }
-    }
-
-    private void checkDirectory(Uri root) {
-        LOG.v(TAG, "Starting check of " + root.getPath());
-        DocumentFile document = DocumentFile.fromTreeUri(getContext(), root);
-
-        for (DocumentFile file : document.listFiles()) {
-            try {
-                if (file.exists() && !file.isDirectory()) {
-                    LOG.v(TAG, "Checking " + file.getName());
-                    String path = Helpers.getPath(getContext(), file.getUri());
-                    LOG.v(TAG, "Got mapped path " + path);
-                }
-            } catch (Exception e) {
-                LOG.v(TAG, "Error checking " + file.getName() + ", " + e);
-            }
-        }
-
-        LOG.v(TAG, "Ended check of " + root.getPath());
     }
 
     private File getSdCardDirectory() {
@@ -130,8 +111,7 @@ public class UsbDetection extends CordovaPlugin {
     }
 
     private boolean isUsbAvailable() {
-        UsbManager usbManager = (UsbManager) getContext().getSystemService(Context.USB_SERVICE);
-        return usbManager.getDeviceList().size() > 0;
+        return Helpers.hasMassStorageDevice(getContext());
     }
 
     public void onResume(boolean multitasking) {
@@ -142,20 +122,41 @@ public class UsbDetection extends CordovaPlugin {
     public void onPause(boolean multitasking) {
         super.onPause(multitasking);
 
-        if (updateReceiver != null) {
-            LOG.v(TAG, "Destroying broadcast receiver");
-            getContext().unregisterReceiver(updateReceiver);
-            updateReceiver = null;
+        if (usbReceiver != null) {
+            LOG.v(TAG, "Destroying usb receiver");
+            getContext().unregisterReceiver(usbReceiver);
+            usbReceiver = null;
+        }
+
+        if (mediaReceiver != null) {
+            LOG.v(TAG, "Destroying media receiver");
+            getContext().unregisterReceiver(mediaReceiver);
+            mediaReceiver = null;
         }
     }
 
     private void initBroadcastReceiver() {
         LOG.v(TAG, "Initialising broadcast receiver");
-        updateReceiver = new BroadcastReceiver() {
+
+        usbReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String action = intent.getAction();
-                LOG.d(TAG, "Broadcast intent" + action);
+                LOG.d(TAG, "USB broadcast intent " + action);
+
+                if (updateCallback != null) {
+                    PluginResult result = new PluginResult(PluginResult.Status.OK, isUsbAvailable());
+                    result.setKeepCallback(true);
+                    updateCallback.sendPluginResult(result);
+                }
+            }
+        };
+
+        mediaReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String action = intent.getAction();
+                LOG.d(TAG, "Media broadcast intent " + action);
 
                 if (updateCallback != null) {
                     PluginResult result = new PluginResult(PluginResult.Status.OK, isUsbAvailable());
@@ -168,15 +169,17 @@ public class UsbDetection extends CordovaPlugin {
         IntentFilter mediaFilter = new IntentFilter();
         mediaFilter.addAction(Intent.ACTION_MEDIA_UNMOUNTED);
         mediaFilter.addAction(Intent.ACTION_MEDIA_MOUNTED);
-        mediaFilter.addDataScheme(ContentResolver.SCHEME_FILE);
+        mediaFilter.addAction(Intent.ACTION_MEDIA_SHARED);
+        mediaFilter.addAction(Intent.ACTION_MEDIA_EJECT);
+        mediaFilter.addDataScheme(ContentResolver.SCHEME_CONTENT);
 
         IntentFilter otgFilter = new IntentFilter();
         otgFilter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
         otgFilter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
 
         Context context = getContext();
-        context.registerReceiver(updateReceiver, mediaFilter);
-        context.registerReceiver(updateReceiver, otgFilter);
+        context.registerReceiver(mediaReceiver, mediaFilter);
+        context.registerReceiver(usbReceiver, otgFilter);
     }
 
     private Context getContext() {
