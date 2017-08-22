@@ -9,8 +9,11 @@ import org.apache.cordova.LOG;
 import org.apache.cordova.file.FileUtils;
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
+
 import android.app.Activity;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.Context;
@@ -25,12 +28,14 @@ import java.io.File;
 public class UsbDetection extends CordovaPlugin {
     private static final String TAG = "UsbDetection";
     private static final int REQUEST_FIND_CARD = 763;
+    private static final int REQUEST_OPEN_DOCUMENT = 348;
 
     private CallbackContext updateCallback;
     private BroadcastReceiver usbReceiver;
     private BroadcastReceiver mediaReceiver;
 
     private CallbackContext openCallback;
+    private CallbackContext selectCallback;
 
     @Override
     public void initialize(final CordovaInterface cordova, CordovaWebView webView){
@@ -53,13 +58,25 @@ public class UsbDetection extends CordovaPlugin {
             updateCallback.sendPluginResult(result);
             return true;
         } else if (action.equals("open")) {
-            openCallback = callbackContext;
-            cordova.setActivityResultCallback(this);
+            discoverAndOpenCard(data, callbackContext);
+            return true;
+        } else if (action.equals("select")) {
+            selectCallback = callbackContext;
 
-            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-            cordova.startActivityForResult(this, intent, REQUEST_FIND_CARD);
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+            if (data.length() > 0) {
+                String type = data.getString(0);
+                if (type != null && type.length() > 0) {
+                    LOG.v(TAG, "Setting open document type to " + type);
+                    intent.setType(type);
+                }
+            }
+
+            cordova.startActivityForResult(this, intent, REQUEST_OPEN_DOCUMENT);
             return true;
         }
+
         return false;
     }
 
@@ -69,45 +86,115 @@ public class UsbDetection extends CordovaPlugin {
         switch (requestCode) {
             case REQUEST_FIND_CARD:
                 if (openCallback != null) {
-                    PluginResult result = null;
-
                     if (resultCode == Activity.RESULT_OK) {
                         String path = data.getDataString();
                         LOG.v(TAG, "Found card root " + path);
-                        result = new PluginResult(PluginResult.Status.OK, path);
+                        discoverAndReturnUploadableFiles(path);
                     } else {
                         LOG.v(TAG, "Card root failed");
+                        PluginResult result = new PluginResult(PluginResult.Status.ERROR);
+
+                        openCallback.sendPluginResult(result);
+                        openCallback = null;
+                    }
+                }
+                break;
+            case REQUEST_OPEN_DOCUMENT:
+                if (selectCallback != null) {
+                    PluginResult result = null;
+
+                    if (resultCode != Activity.RESULT_OK) {
+                        LOG.v(TAG, "Document selection failed");
                         result = new PluginResult(PluginResult.Status.ERROR);
+                    } else {
+                        try {
+                            JSONArray files = new JSONArray();
+                            Context context = getContext();
+
+                            ClipData fileData = data.getClipData();
+                            if (fileData == null) {
+                                Uri uri = data.getData();
+                                String fileName = Helpers.getFileName(context, uri);
+                                LOG.v(TAG, "User selected one file: " + uri.toString() + ", " + fileName);
+                                files.put(constructFileObject(uri, fileName));
+                            } else {
+                                int fileCount = fileData.getItemCount();
+                                LOG.v(TAG, "User selected " + fileCount + " file(s)");
+
+                                for (int i = 0; i < fileCount; ++i) {
+                                    ClipData.Item item = fileData.getItemAt(i);
+                                    Uri uri = item.getUri();
+                                    String fileName = Helpers.getFileName(context, uri);
+                                    LOG.v(TAG, "User selected " + uri.toString() + ", " + fileName);
+                                    files.put(constructFileObject(uri, fileName));
+                                }
+                            }
+
+                            result = new PluginResult(PluginResult.Status.OK, files);
+                        } catch (JSONException e) {
+                            LOG.e(TAG, "Document selection failed", e);
+                            result = new PluginResult(PluginResult.Status.ERROR);
+                        }
                     }
 
-                    openCallback.sendPluginResult(result);
-                    openCallback = null;
+                    selectCallback.sendPluginResult(result);
+                    selectCallback = null;
                 }
         }
     }
 
-    private File getSdCardDirectory() {
-        String externalStorageDirectory = Environment.getExternalStorageDirectory().getAbsolutePath();
+    private void discoverAndOpenCard(JSONArray data, CallbackContext callbackContext) {
+        openCallback = callbackContext;
+        boolean needsDiscovery = true;
 
-        LOG.v(TAG, "External storage directory is " + externalStorageDirectory);
-
-        File[] storageDirs = new File("/storage/").listFiles();
-        File sdDir = null;
-
-        for (int i = 0; i < storageDirs.length && sdDir == null; ++i) {
-            File dir = storageDirs[i];
-            LOG.v(TAG, "Checking directory " + dir.getAbsolutePath());
-            if (!dir.getAbsolutePath().equals(externalStorageDirectory) && dir.isDirectory() && dir.canRead()) {
-                LOG.v(TAG, "This is the absolute path");
-                sdDir = dir;
+        if (data.length() > 0) {
+            try {
+                JSONArray existingRoots = data.getJSONArray(0);
+                if (existingRoots != null && existingRoots.length() > 0) {
+                    String rootDir = Helpers.findValidRoot(getContext(), existingRoots);
+                    if (rootDir != null) {
+                        needsDiscovery = false;
+                        LOG.v(TAG, "Discovered existing root, discovering and returning files from" + rootDir);
+                        discoverAndReturnUploadableFiles(rootDir);
+                    }
+                }
+            } catch (Exception e) {
+                LOG.e(TAG, "Error while trying to open existing roots", e);
             }
         }
 
-        return sdDir;
+        if (needsDiscovery) {
+            Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            cordova.startActivityForResult(this, intent, REQUEST_FIND_CARD);
+        }
     }
 
-    private boolean isSdPresent() {
-        return getSdCardDirectory() != null;
+    private void discoverAndReturnUploadableFiles(final String rootDir) {
+        if (openCallback != null) {
+            final CallbackContext thisOpenCallback = openCallback;
+            openCallback = null;
+
+            cordova.getThreadPool().execute(new Runnable() {
+                public void run() {
+                    PluginResult result = null;
+
+                    try {
+                        JSONArray files = Helpers.discoverUploadFiles(getContext(), rootDir);
+
+                        JSONObject uploadResult = new JSONObject();
+                        uploadResult.put("root", rootDir);
+                        uploadResult.put("files", files);
+
+                        result = new PluginResult(PluginResult.Status.OK, uploadResult);
+                    } catch (Exception e) {
+                        LOG.e(TAG, "Exception while discovering uploadable files", e);
+                        result = new PluginResult(PluginResult.Status.ERROR);
+                    }
+
+                    thisOpenCallback.sendPluginResult(result);
+                }
+            });
+        }
     }
 
     private boolean isUsbAvailable() {
@@ -184,5 +271,12 @@ public class UsbDetection extends CordovaPlugin {
 
     private Context getContext() {
         return cordova.getActivity().getApplicationContext();
+    }
+
+    private JSONObject constructFileObject(Uri file, String fileName) throws JSONException {
+        JSONObject obj = new JSONObject();
+        obj.put("uri", file.toString());
+        obj.put("name", fileName);
+        return obj;
     }
 }
