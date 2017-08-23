@@ -6,11 +6,11 @@ import org.apache.cordova.CordovaPlugin;
 import org.apache.cordova.CordovaWebView;
 import org.apache.cordova.PluginResult;
 import org.apache.cordova.LOG;
-import org.apache.cordova.file.FileUtils;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
@@ -20,10 +20,6 @@ import android.content.Context;
 import android.content.ContentResolver;
 import android.hardware.usb.UsbManager;
 import android.net.Uri;
-import android.os.Environment;
-import android.support.v4.provider.DocumentFile;
-
-import java.io.File;
 
 public class UsbDetection extends CordovaPlugin {
     private static final String TAG = "UsbDetection";
@@ -88,7 +84,8 @@ public class UsbDetection extends CordovaPlugin {
                 if (openCallback != null) {
                     if (resultCode == Activity.RESULT_OK) {
                         String path = data.getDataString();
-                        LOG.v(TAG, "Found card root " + path);
+                        LOG.v(TAG, "Found new card root " + path);
+                        persistFoundRoot(data);
                         discoverAndReturnUploadableFiles(path);
                     } else {
                         LOG.v(TAG, "Card root failed");
@@ -143,6 +140,13 @@ public class UsbDetection extends CordovaPlugin {
         }
     }
 
+    @TargetApi(19)
+    private void persistFoundRoot(Intent data) {
+        Uri root = data.getData();
+        getContext().getContentResolver().takePersistableUriPermission(root, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        LOG.v(TAG, "Persisted root " + data.getDataString());
+    }
+
     private void discoverAndOpenCard(JSONArray data, CallbackContext callbackContext) {
         openCallback = callbackContext;
         boolean needsDiscovery = true;
@@ -165,6 +169,12 @@ public class UsbDetection extends CordovaPlugin {
 
         if (needsDiscovery) {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+            intent.addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+                            | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+            );
             cordova.startActivityForResult(this, intent, REQUEST_FIND_CARD);
         }
     }
